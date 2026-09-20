@@ -1,14 +1,7 @@
 import "server-only";
 import { GoogleGenAI } from "@google/genai";
 import { buildSystemPrompt, buildUserPrompt } from "./journal-templates";
-import type { ResearchInput } from "./types";
-
-export const DEFAULT_MODEL = "gemini-2.5-flash";
-export const FREE_MODELS = [
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (gratis, cepat)" },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (gratis tier, lebih teliti)" },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (gratis, paling cepat)" },
-] as const;
+import { DEFAULT_MODEL, type ResearchInput } from "./types";
 
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -27,17 +20,30 @@ async function* streamContent(
   temperature: number
 ): AsyncGenerator<string> {
   const client = getClient();
-  const response = await client.models.generateContentStream({
-    model,
-    contents: prompt,
-    config: {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      temperature,
-    },
-  });
-  for await (const chunk of response) {
-    if (chunk.text) yield chunk.text;
+  const candidates =
+    model && model !== DEFAULT_MODEL ? [model, DEFAULT_MODEL] : [DEFAULT_MODEL];
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      const response = await client.models.generateContentStream({
+        model: candidate,
+        contents: prompt,
+        config: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          temperature,
+        },
+      });
+      for await (const chunk of response) {
+        if (chunk.text) yield chunk.text;
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  throw lastError;
 }
 
 export function generateDraftStream(

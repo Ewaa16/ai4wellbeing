@@ -4,7 +4,9 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { SECTION_CHOICES } from "@/lib/journal-templates";
 import { validateDraft, validationScore } from "@/lib/validate";
 import {
+  DEFAULT_MODEL,
   DEFAULT_RESEARCH_INPUT,
+  FREE_MODELS,
   type ResearchInput,
   type ValidationRule,
 } from "@/lib/types";
@@ -63,7 +65,7 @@ export default function Home() {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [model, setModel] = useState("gemini-2.5-flash");
+  const [model, setModel] = useState(DEFAULT_MODEL);
   const [section, setSection] = useState(SECTION_CHOICES[0]);
   const [instruction, setInstruction] = useState("");
   const [revising, setRevising] = useState(false);
@@ -209,18 +211,28 @@ export default function Home() {
             </label>
           ))}
           <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-slate-700">Model AI</span>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            >
-              <optgroup label="Gratis (Gemini)">
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash — cepat & murah</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro — kualitas terbaik</option>
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash — paling cepat</option>
-              </optgroup>
-            </select>
+            <span className="text-sm font-medium text-slate-700">Model AI (gratis)</span>
+            {FREE_MODELS.length > 1 ? (
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              >
+                {FREE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {FREE_MODELS[0].label}
+              </div>
+            )}
+            <p className="text-[11px] text-slate-500">
+              Jika model dipilih ternyata tidak lagi didukung, server otomatis memakai{" "}
+              {DEFAULT_MODEL}.
+            </p>
           </label>
           <button
             onClick={() => runStream("draft")}

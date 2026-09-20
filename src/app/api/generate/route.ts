@@ -1,5 +1,5 @@
 import { generateDraftStream, reviseStream } from "@/lib/generate";
-import { DEFAULT_RESEARCH_INPUT, type DraftPayload, type ResearchInput } from "@/lib/types";
+import { DEFAULT_MODEL, DEFAULT_RESEARCH_INPUT, type DraftPayload, type ResearchInput } from "@/lib/types";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   const input: ResearchInput = { ...DEFAULT_RESEARCH_INPUT, ...body.input };
-  const model = body.model ?? "gemini-2.5-flash";
+  const model = body.model ?? DEFAULT_MODEL;
 
   let generator: AsyncGenerator<string>;
   if (body.mode === "revise") {

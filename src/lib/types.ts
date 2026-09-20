@@ -1,5 +1,13 @@
 export type JournalFormat = "ieee";
 
+export const DEFAULT_MODEL = "gemini-3.6-flash";
+
+export const FREE_MODELS = [
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash (gratis, paling stabil)" },
+] as const;
+
+export type ModelId = (typeof FREE_MODELS)[number]["id"];
+
 export interface ResearchInput {
   title: string;
   subjectArea: string;
