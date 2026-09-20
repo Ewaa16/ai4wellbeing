@@ -5,6 +5,20 @@ import { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function friendlyError(raw: string): string {
+  if (/no longer available|not found|not supported/i.test(raw)) {
+    return "Model yang diminta tidak lagi didukung. Server otomatis memakai model default (gemini-3.6-flash).";
+  }
+  if (/high demand|503|overloaded/i.test(raw)) {
+    return "Model sedang penuh permintaan (kuota gratis Gemini). Tunggu sebentar lalu coba lagi.";
+  }
+  if (/429|quota|rate limit/i.test(raw)) {
+    return "Kuota gratis harian untuk Gemini habis. Tunggu hingga reset kuota, atau hubungi pengelola app untuk upgrade.";
+  }
+  const inner = raw.match(/"message":\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
+  return inner ? inner[1].replace(/\\n/g, " ") : raw;
+}
+
 export async function POST(request: NextRequest) {
   let body: DraftPayload;
   try {
@@ -51,9 +65,8 @@ export async function POST(request: NextRequest) {
         }
         controller.close();
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Gagal menghubungi model AI.";
-        controller.enqueue(encoder.encode(`\n\n[ERROR] ${message}`));
+        const raw = error instanceof Error ? error.message : "Gagal menghubungi model AI.";
+        controller.enqueue(encoder.encode(`\n\n[ERROR] ${friendlyError(raw)}`));
         controller.close();
       }
     },
