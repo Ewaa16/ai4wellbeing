@@ -19,6 +19,13 @@ function friendlyError(raw: string): string {
   return inner ? inner[1].replace(/\\n/g, " ") : raw;
 }
 
+function isTransientError(raw: string): boolean {
+  return /503|high demand|overloaded|429|rate limit|quota/i.test(raw);
+}
+
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 2500;
+
 export async function POST(request: NextRequest) {
   let body: DraftPayload;
   try {
@@ -40,35 +47,60 @@ export async function POST(request: NextRequest) {
   const input: ResearchInput = { ...DEFAULT_RESEARCH_INPUT, ...body.input };
   const model = body.model ?? DEFAULT_MODEL;
 
-  let generator: AsyncGenerator<string>;
-  if (body.mode === "revise") {
-    if (!body.currentDraft || !body.section) {
-      return Response.json({ error: "Draft dan bagian yang direvisi wajib diisi." }, { status: 400 });
+  const makeGenerator = (): AsyncGenerator<string> => {
+    if (body.mode === "revise") {
+      if (!body.currentDraft || !body.section) {
+        throw new Error("Draft dan bagian yang direvisi wajib diisi.");
+      }
+      return reviseStream(
+        input,
+        body.currentDraft,
+        body.section,
+        body.instruction ?? "perbaiki bagian ini",
+        model
+      );
     }
-    generator = reviseStream(
-      input,
-      body.currentDraft,
-      body.section,
-      body.instruction ?? "perbaiki bagian ini",
-      model
-    );
-  } else {
-    generator = generateDraftStream(input, model);
+    return generateDraftStream(input, model);
+  };
+
+  let invalid: string | null = null;
+  try {
+    makeGenerator();
+  } catch (error) {
+    invalid = error instanceof Error ? error.message : "Parameter tidak valid.";
+  }
+  if (invalid) {
+    return Response.json({ error: invalid }, { status: 400 });
   }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      try {
-        for await (const chunk of generator) {
-          controller.enqueue(encoder.encode(chunk));
+      let emitted = false;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const generator = makeGenerator();
+        try {
+          for await (const chunk of generator) {
+            emitted = true;
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+          return;
+        } catch (error) {
+          const raw =
+            error instanceof Error
+              ? error.message
+              : "Gagal menghubungi model AI.";
+          if (isTransientError(raw) && attempt < MAX_ATTEMPTS && !emitted) {
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+          controller.enqueue(encoder.encode(`\n\n[ERROR] ${friendlyError(raw)}`));
+          controller.close();
+          return;
         }
-        controller.close();
-      } catch (error) {
-        const raw = error instanceof Error ? error.message : "Gagal menghubungi model AI.";
-        controller.enqueue(encoder.encode(`\n\n[ERROR] ${friendlyError(raw)}`));
-        controller.close();
       }
+      controller.close();
     },
   });
 

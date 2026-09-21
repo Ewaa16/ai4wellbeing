@@ -17,3 +17,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  @page {
+    margin: 20mm;
+  }
+}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import { useLocalStorage, useLocalStorageObject } from "@/lib/autosave";
 import { SECTION_CHOICES } from "@/lib/journal-templates";
 import { validateDraft, validationScore } from "@/lib/validate";
 import {
@@ -19,6 +20,8 @@ interface HistoryItem {
 }
 
 const HISTORY_KEY = "jurnal-history";
+const DRAFT_KEY = "jurnal-draft";
+const INPUT_KEY = "jurnal-input";
 let historyCache: HistoryItem[] | null = null;
 
 function getHistorySnapshot(): HistoryItem[] {
@@ -61,8 +64,12 @@ const FIELDS: { key: keyof ResearchInput; label: string; hint: string; rows: num
 ];
 
 export default function Home() {
-  const [input, setInput] = useState<ResearchInput>(DEFAULT_RESEARCH_INPUT);
-  const [draft, setDraft] = useState("");
+  const [input, setInput] = useLocalStorageObject<ResearchInput>(
+    INPUT_KEY,
+    DEFAULT_RESEARCH_INPUT
+  );
+  const [draft, setDraft] = useLocalStorage(DRAFT_KEY);
+  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
@@ -70,18 +77,21 @@ export default function Home() {
   const [instruction, setInstruction] = useState("");
   const [revising, setRevising] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const draftRef = useRef("");
   const history = useSyncExternalStore(
     subscribeHistory,
     getHistorySnapshot,
     () => []
   );
 
-  const setField = useCallback((key: keyof ResearchInput, value: string) => {
-    setInput((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const setField = useCallback(
+    (key: keyof ResearchInput, value: string) => {
+      setInput((prev) => ({ ...prev, [key]: value }));
+    },
+    [setInput]
+  );
 
   const rules: ValidationRule[] = validateDraft(draft);
+  const words = draft.trim().split(/\s+/).filter(Boolean).length;
 
   async function runStream(mode: "draft" | "revise") {
     setError("");
@@ -91,7 +101,7 @@ export default function Home() {
       mode,
       input,
       model,
-      currentDraft: mode === "revise" ? draftRef.current : undefined,
+      currentDraft: mode === "revise" ? draft : undefined,
       section: mode === "revise" ? section : undefined,
       instruction: mode === "revise" ? instruction : undefined,
     };
@@ -109,12 +119,11 @@ export default function Home() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let acc = "";
-      draftRef.current = "";
+      setDraft("");
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        draftRef.current = acc;
         setDraft(acc);
       }
       if (acc.includes("[ERROR]")) {
@@ -134,7 +143,7 @@ export default function Home() {
       const res = await fetch("/api/export-docx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: draftRef.current, title: input.title || "Manuscript Draft" }),
+        body: JSON.stringify({ text: draft, title: input.title || "Manuscript Draft" }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
@@ -157,19 +166,41 @@ export default function Home() {
   }
 
   function saveToHistory() {
-    if (!draftRef.current.trim()) return;
+    if (!draft.trim()) return;
     const item: HistoryItem = {
       id: crypto.randomUUID(),
       title: input.title || `Draft ${new Date().toLocaleString("id-ID")}`,
-      text: draftRef.current,
+      text: draft,
       savedAt: new Date().toISOString(),
     };
     writeHistory([item, ...history].slice(0, 20));
   }
 
   function loadFromHistory(item: HistoryItem) {
-    draftRef.current = item.text;
     setDraft(item.text);
+  }
+
+  async function copyDraft() {
+    const text = draft;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  function exportPdf() {
+    window.print();
   }
 
   const score = validationScore(rules);
@@ -184,7 +215,7 @@ export default function Home() {
           Prompting risetmu menjadi draft manuskrip berformat IEEE, siap Anda tinjau sebelum
           diserahkan ke jurnal intensif Scopus.
         </p>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 print:hidden">
           <b>Penting:</b> Draft dihasilkan AI. Semua data, angka, dan referensi wajib{" "}
           <b>berasal dari riset aslimu</b>. Tinjau, verifikasi, dan susun ulang kalimat sesuai
           kebijakan jurnal targetmu. Kebijakan banyak jurnal Scopus mewajibkan keterlibatan penulis
@@ -193,7 +224,7 @@ export default function Home() {
       </header>
 
       <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,440px)_1fr]">
-        <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">1</span>
             Input Riset
@@ -249,7 +280,14 @@ export default function Home() {
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>
               Draft Manuskrip
             </h2>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 print:hidden">
+              <button
+                onClick={copyDraft}
+                disabled={loading || !draft}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                {copied ? "Tersalin ✓" : "Copy"}
+              </button>
               <button
                 onClick={saveToHistory}
                 disabled={loading || !draft}
@@ -264,28 +302,40 @@ export default function Home() {
               >
                 {exporting ? "Membuat file…" : "Export .docx"}
               </button>
+              <button
+                onClick={exportPdf}
+                disabled={loading || !draft}
+                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+              >
+                Export PDF
+              </button>
             </div>
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 print:hidden">
               {error}
             </div>
           )}
 
           <textarea
             value={draft}
-            onChange={(e) => {
-              draftRef.current = e.target.value;
-              setDraft(e.target.value);
-            }}
+            onChange={(e) => setDraft(e.target.value)}
             placeholder={
               "Draft akan muncul di sini setelah Anda menekan \"Generate Full Draft\".\n\nAnda juga bisa menempelkan draft dari tempat lain untuk divalidasi atau di-export."
             }
-            className="min-h-[420px] flex-1 resize-y rounded-xl border border-slate-300 p-4 font-mono text-[13px] leading-relaxed text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            className="min-h-[420px] flex-1 resize-y rounded-xl border border-slate-300 p-4 font-mono text-[13px] leading-relaxed text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 print:hidden"
           />
 
-          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <pre className="hidden whitespace-pre-wrap break-words font-serif text-[12px] leading-relaxed text-black print:block">
+            {draft}
+          </pre>
+
+          <p className="text-xs text-slate-500 print:hidden">
+            {words} kata · {draft.length} karakter — draft otomatis tersimpan di browser.
+          </p>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 print:hidden">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-800">
                 Validasi Kepatuhan IEEE ({score.pass}/{score.total})
@@ -325,7 +375,7 @@ export default function Home() {
             </ul>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
             <h3 className="text-sm font-semibold text-slate-800">Revisi Bagian</h3>
             <div className="grid gap-2 sm:grid-cols-[180px_1fr_auto]">
               <select
@@ -358,7 +408,7 @@ export default function Home() {
           </div>
 
           {history.length > 0 && (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 print:hidden">
               <h3 className="text-sm font-semibold text-slate-800">Riwayat (tersimpan otomatis)</h3>
               <ul className="flex flex-col gap-1.5">
                 {history.map((item) => (
